@@ -1,17 +1,24 @@
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/layout/Sidebar";
+import Topbar from "@/components/layout/Topbar";
+
 interface AppShellProps {
   children: React.ReactNode;
 }
 
 const AppShell = ({ children }: AppShellProps) => {
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar placeholder */}
-      <div className="hidden md:block" />
-      <div className="flex flex-1 flex-col">
-        {/* Topbar placeholder */}
-        <main className="flex-1">{children}</main>
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full">
+        <AppSidebar />
+        <div className="flex-1 flex flex-col min-w-0">
+          <Topbar />
+          <main className="flex-1 p-6 overflow-auto">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </SidebarProvider>
   );
 };
 
