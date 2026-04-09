@@ -7,7 +7,11 @@ export default {
   theme: {
     container: {
       center: true,
-      padding: "2rem",
+      padding: {
+        DEFAULT: "1rem",
+        md: "1.5rem",
+        lg: "2rem",
+      },
       screens: {
         "2xl": "1400px",
       },
@@ -107,6 +111,22 @@ export default {
           "0%, 100%": { transform: "scale(1)", opacity: "1" },
           "50%": { transform: "scale(1.5)", opacity: "0.5" },
         },
+        "slide-step": {
+          from: { opacity: "0", transform: "translateX(16px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
+        },
+        "scale-in": {
+          from: { opacity: "0", transform: "scale(0)" },
+          to: { opacity: "1", transform: "scale(1)" },
+        },
+        "error-slide": {
+          from: { opacity: "0", transform: "translateY(-8px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        "spin-slow": {
+          from: { transform: "rotate(0deg)" },
+          to: { transform: "rotate(360deg)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -116,6 +136,10 @@ export default {
         "fade-in": "fade-in 0.3s ease-out",
         "fade-in-up": "fade-in-up 0.4s ease-out",
         "pulse-dot": "pulse-dot 2s ease-in-out infinite",
+        "slide-step": "slide-step 0.3s ease-out",
+        "scale-in": "scale-in 0.2s ease-out",
+        "error-slide": "error-slide 0.2s ease-out",
+        "spin-slow": "spin-slow 2s linear infinite",
       },
     },
   },
