@@ -1,6 +1,6 @@
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeApp, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -11,7 +11,29 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+const isConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
+
+let app: FirebaseApp | null = null;
+let auth: Auth;
+let db: Firestore;
+
+if (isConfigured) {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} else {
+  console.warn("[Origin] Firebase not configured — running in demo mode. Set VITE_FIREBASE_* env vars to enable.");
+  // Create proxy objects that won't crash the app
+  const handler: ProxyHandler<any> = {
+    get: (_target, prop) => {
+      if (prop === "currentUser") return null;
+      if (prop === "onAuthStateChanged") return (_cb: any) => { _cb(null); return () => {}; };
+      return () => {};
+    },
+  };
+  auth = new Proxy({} as Auth, handler);
+  db = new Proxy({} as Firestore, handler);
+}
+
+export { auth, db };
 export default app;
