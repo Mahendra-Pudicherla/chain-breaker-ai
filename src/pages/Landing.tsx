@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, Cpu, Users, Check, X, ChevronRight, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,18 +37,18 @@ function TerminalAnimation() {
   const currentText = terminalMessages[msgIndex].slice(0, charIndex);
 
   return (
-    <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm max-w-xl mx-auto lg:mx-0">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="bg-[#0d0d14] border border-border rounded-xl p-5 font-mono text-sm max-w-xl mx-auto lg:mx-0 shadow-2xl">
+      <div className="flex items-center gap-2 mb-4">
         <span className="h-3 w-3 rounded-full bg-severity-critical/60" />
         <span className="h-3 w-3 rounded-full bg-severity-medium/60" />
         <span className="h-3 w-3 rounded-full bg-severity-low/60" />
-        <span className="text-xs text-muted-foreground ml-2">origin-scanner</span>
+        <span className="text-[10px] text-muted-foreground ml-2 uppercase tracking-wider">origin-scanner</span>
       </div>
-      <div className="text-muted-foreground">
+      <div className="text-muted-foreground min-h-[24px]">
         <span className="text-severity-low">$</span>{" "}
-        <span className="text-severity-critical">[ALERT]</span>{" "}
+        <span className="text-severity-high font-medium">[ALERT]</span>{" "}
         <span className="text-foreground">{currentText}</span>
-        <span className="inline-block w-2 h-4 bg-primary ml-0.5 animate-blink" />
+        <span className="inline-block w-2 h-5 bg-primary ml-0.5 animate-blink align-middle" />
       </div>
     </div>
   );
@@ -96,23 +96,22 @@ function ComparisonCell({ value }: { value: boolean | string }) {
 
 const Landing = () => {
   const navigate = useNavigate();
-  const demoRef = useRef<HTMLDivElement>(null);
 
   const scrollToDemo = () => {
-    demoRef.current?.scrollIntoView({ behavior: "smooth" });
+    document.getElementById("features")?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (
     <div className="min-h-screen bg-background">
       {/* Nav */}
-      <nav className="border-b border-border/50 bg-background/80 backdrop-blur-sm sticky top-0 z-50">
+      <nav className="border-b border-border/50 bg-background/80 backdrop-blur-md sticky top-0 z-50">
         <div className="container flex items-center justify-between h-14">
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-primary" />
             <span className="font-bold text-lg text-foreground">Origin</span>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={scrollToDemo} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={scrollToDemo} className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:block">
               Features
             </button>
             <Button size="sm" onClick={() => navigate("/auth")}>
@@ -123,41 +122,43 @@ const Landing = () => {
       </nav>
 
       {/* Hero */}
-      <section className="container py-20 lg:py-32">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
-          <div className="space-y-6">
-            <h1 className="text-4xl lg:text-6xl font-extrabold tracking-tight text-foreground leading-[1.1]">
-              Stop Guessing.{" "}
-              <span className="text-primary">Start Knowing.</span>
-            </h1>
-            <p className="text-lg text-muted-foreground max-w-lg leading-relaxed">
-              Origin is an AI-powered vulnerability scanner that thinks like an attacker — detecting logic flaws, RBAC gaps, and API exploits that traditional tools miss.
-            </p>
-            <div className="flex items-center gap-3 pt-2">
-              <Button size="lg" onClick={() => navigate("/auth")} className="gap-2">
-                Start Free Scan <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button size="lg" variant="outline" onClick={scrollToDemo} className="gap-2 border-border text-foreground hover:bg-muted">
-                See a Live Demo <ChevronRight className="h-4 w-4" />
-              </Button>
+      <section className="hero-gradient relative">
+        <div className="container py-16 md:py-24 lg:py-32">
+          <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+            <div className="space-y-6">
+              <h1 className="text-3xl sm:text-4xl lg:text-6xl font-extrabold tracking-tight text-foreground leading-[1.1]">
+                Stop Guessing.{" "}
+                <span className="text-primary">Start Knowing.</span>
+              </h1>
+              <p className="text-base sm:text-lg text-muted-foreground max-w-lg leading-relaxed">
+                Origin is an AI-powered vulnerability scanner that thinks like an attacker — detecting logic flaws, RBAC gaps, and API exploits that traditional tools miss.
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
+                <Button size="lg" onClick={() => navigate("/auth")} className="gap-2">
+                  Start Free Scan <ArrowRight className="h-4 w-4" />
+                </Button>
+                <Button size="lg" variant="outline" onClick={scrollToDemo} className="gap-2 border-border text-foreground hover:bg-muted">
+                  See a Live Demo <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-          </div>
-          <div>
-            <TerminalAnimation />
+            <div>
+              <TerminalAnimation />
+            </div>
           </div>
         </div>
       </section>
 
       {/* Features */}
-      <section ref={demoRef} className="container py-20 border-t border-border/50">
+      <section id="features" className="container py-16 md:py-20 border-t border-border/50">
         <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold text-foreground">What Makes Origin Different</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold text-foreground">What Makes Origin Different</h2>
           <p className="text-muted-foreground mt-2">Purpose-built for modern web applications</p>
         </div>
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
           {features.map((f) => (
-            <Card key={f.title} className="bg-card border-border hover:border-primary/30 transition-colors">
-              <CardContent className="p-6 space-y-3">
+            <Card key={f.title} className="bg-card border-border card-hover card-lift cursor-default">
+              <CardContent className="p-5 md:p-6 space-y-3">
                 <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
                   <f.icon className="h-5 w-5 text-primary" />
                 </div>
@@ -170,11 +171,11 @@ const Landing = () => {
       </section>
 
       {/* How it works */}
-      <section className="container py-20 border-t border-border/50">
+      <section className="container py-16 md:py-20 border-t border-border/50">
         <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold text-foreground">How It Works</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold text-foreground">How It Works</h2>
         </div>
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid sm:grid-cols-3 gap-6 md:gap-8">
           {steps.map((s) => (
             <div key={s.num} className="space-y-3">
               <span className="text-4xl font-extrabold text-primary/20">{s.num}</span>
@@ -186,14 +187,14 @@ const Landing = () => {
       </section>
 
       {/* Comparison */}
-      <section className="container py-20 border-t border-border/50">
+      <section className="container py-16 md:py-20 border-t border-border/50">
         <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold text-foreground">Origin vs. The Competition</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold text-foreground">Origin vs. The Competition</h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full text-sm min-w-[500px]">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="bg-primary/5 sticky top-0">
                 <th className="text-left py-3 px-4 text-muted-foreground font-medium">Feature</th>
                 <th className="text-center py-3 px-4 text-primary font-semibold">Origin</th>
                 <th className="text-center py-3 px-4 text-muted-foreground font-medium">OWASP ZAP</th>
@@ -201,8 +202,8 @@ const Landing = () => {
               </tr>
             </thead>
             <tbody>
-              {comparisonRows.map((row) => (
-                <tr key={row.feature} className="border-b border-border/50">
+              {comparisonRows.map((row, i) => (
+                <tr key={row.feature} className={`border-t border-border/50 ${i % 2 === 0 ? "bg-card/50" : ""}`}>
                   <td className="py-3 px-4 text-foreground">{row.feature}</td>
                   <td className="py-3 px-4 text-center"><ComparisonCell value={row.origin} /></td>
                   <td className="py-3 px-4 text-center"><ComparisonCell value={row.zap} /></td>
