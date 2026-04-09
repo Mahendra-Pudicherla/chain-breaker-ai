@@ -47,6 +47,15 @@ export interface User {
   createdAt: Timestamp;
   plan: "free" | "pro";
   totalScans: number;
+  notificationPrefs?: {
+    onScanComplete: boolean;
+    onCriticalFinding: boolean;
+    notificationEmail: string;
+  };
+  apiKeys?: {
+    claudeApiKey: string;
+    resendApiKey: string;
+  };
 }
 
 export interface AuthConfig {
