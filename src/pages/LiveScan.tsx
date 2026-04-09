@@ -7,16 +7,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import AppShell from "@/components/layout/AppShell";
 import ProgressRing from "@/components/scan/ProgressRing";
@@ -61,6 +55,7 @@ const LiveScan = () => {
   const [scan, setScan] = useState<Scan | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [nodes, setNodes] = useState<SitemapNode[]>([]);
+  const [loading, setLoading] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
 
   const startDate = scan?.createdAt?.toDate ? scan.createdAt.toDate() : null;
@@ -68,7 +63,7 @@ const LiveScan = () => {
 
   useEffect(() => {
     if (!scanId) return;
-    const unsub1 = onScan(scanId, setScan);
+    const unsub1 = onScan(scanId, (s) => { setScan(s); setLoading(false); });
     const unsub2 = onFindings(scanId, setFindings);
     const unsub3 = onSitemapNodes(scanId, setNodes);
     return () => { unsub1(); unsub2(); unsub3(); };
@@ -80,13 +75,8 @@ const LiveScan = () => {
 
   const isActive = scan && ![ScanStatus.Completed, ScanStatus.Failed].includes(scan.status as ScanStatus);
 
-  const handlePause = async () => {
-    if (scanId) await updateScan(scanId, { status: ScanStatus.Queued } as any);
-  };
-
-  const handleStop = async () => {
-    if (scanId) await updateScan(scanId, { status: ScanStatus.Failed } as any);
-  };
+  const handlePause = async () => { if (scanId) await updateScan(scanId, { status: ScanStatus.Queued } as any); };
+  const handleStop = async () => { if (scanId) await updateScan(scanId, { status: ScanStatus.Failed } as any); };
 
   const currentModuleIndex = moduleSteps.findIndex((m) => m.key === scan?.currentModule);
 
@@ -97,11 +87,27 @@ const LiveScan = () => {
     low: findings.filter((f) => f.severity === "low").length,
   };
 
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="space-y-6 max-w-6xl">
+          <Skeleton className="h-8 w-72" />
+          <div className="grid lg:grid-cols-3 gap-6">
+            <Skeleton className="h-64 rounded-lg" />
+            <Skeleton className="lg:col-span-2 h-64 rounded-lg" />
+          </div>
+          <Skeleton className="h-96 rounded-lg" />
+        </div>
+      </AppShell>
+    );
+  }
+
   if (!scan) {
     return (
       <AppShell>
-        <div className="flex items-center justify-center h-64">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <div className="flex flex-col items-center justify-center h-64 space-y-3">
+          <p className="text-muted-foreground">Scan not found</p>
+          <Button variant="outline" onClick={() => navigate("/scans")}>Go to Scan History</Button>
         </div>
       </AppShell>
     );
@@ -110,28 +116,25 @@ const LiveScan = () => {
   return (
     <AppShell>
       <div className="space-y-6 max-w-6xl">
-        {/* Completed / failed banners */}
         {scan.status === ScanStatus.Completed && (
-          <div className="p-4 rounded-lg bg-severity-low/10 border border-severity-low/30 flex items-center justify-between">
+          <div className="p-4 rounded-xl bg-severity-low/10 border border-severity-low/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <CheckCircle className="h-5 w-5 text-severity-low" />
-              <span className="text-sm font-medium text-foreground">
-                Scan Complete! Found {scan.stats?.total ?? 0} vulnerabilities
-              </span>
+              <span className="text-sm font-medium text-foreground">Scan Complete! Found {scan.stats?.total ?? 0} vulnerabilities</span>
             </div>
             <Button size="sm" onClick={() => navigate(`/scan/${scanId}/report`)}>View Full Report</Button>
           </div>
         )}
         {scan.status === ScanStatus.Failed && (
-          <div className="p-4 rounded-lg bg-severity-critical/10 border border-severity-critical/30">
+          <div className="p-4 rounded-xl bg-severity-critical/10 border border-severity-critical/30">
             <span className="text-sm font-medium text-severity-critical">Scan Failed</span>
           </div>
         )}
 
         {/* Header */}
         <div className="flex flex-wrap items-center gap-3">
-          <a href={scan.targetUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm text-primary hover:underline">
-            {scan.targetUrl} <ExternalLink className="h-3 w-3" />
+          <a href={scan.targetUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm text-primary hover:underline truncate max-w-[200px] sm:max-w-none">
+            {scan.targetUrl} <ExternalLink className="h-3 w-3 shrink-0" />
           </a>
           <Badge variant="secondary" className="text-[10px] uppercase">{scan.scanProfile}</Badge>
           <div className="flex items-center gap-1.5">
@@ -144,14 +147,10 @@ const LiveScan = () => {
           </div>
           {isActive && (
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handlePause} className="gap-1 text-xs">
-                <Pause className="h-3 w-3" /> Pause
-              </Button>
+              <Button variant="outline" size="sm" onClick={handlePause} className="gap-1 text-xs" aria-label="Pause scan"><Pause className="h-3 w-3" /> Pause</Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1 text-xs text-severity-critical border-severity-critical/30">
-                    <Square className="h-3 w-3" /> Stop
-                  </Button>
+                  <Button variant="outline" size="sm" className="gap-1 text-xs text-severity-critical border-severity-critical/30" aria-label="Stop scan"><Square className="h-3 w-3" /> Stop</Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
@@ -168,32 +167,27 @@ const LiveScan = () => {
           )}
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
+        <div className="grid lg:grid-cols-3 gap-4 md:gap-6">
           {/* Progress */}
           <Card className="bg-card border-border">
             <CardContent className="p-6 flex flex-col items-center gap-4">
               <ProgressRing progress={scan.progress ?? 0} size={140} label={scan.currentModule} />
-              {/* Module pipeline */}
               <div className="flex flex-wrap items-center justify-center gap-1 mt-2">
                 {moduleSteps.map((m, i) => {
                   const isCompleted = i < currentModuleIndex;
                   const isCurrent = i === currentModuleIndex;
                   return (
                     <div key={m.key} className="flex flex-col items-center gap-1 w-14">
-                      <div
-                        className={`h-7 w-7 rounded-full flex items-center justify-center ${
-                          isCompleted
-                            ? "bg-severity-low/20 text-severity-low"
-                            : isCurrent
-                            ? "bg-primary/20 text-primary ring-2 ring-primary/50"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                      >
-                        {isCompleted ? <CheckCircle className="h-3.5 w-3.5" /> : <m.icon className="h-3.5 w-3.5" />}
+                      <div className={`h-7 w-7 rounded-full flex items-center justify-center transition-all ${
+                        isCompleted ? "bg-severity-low/20 text-severity-low"
+                        : isCurrent ? "bg-primary/20 text-primary ring-2 ring-primary/50"
+                        : "bg-muted text-muted-foreground"
+                      }`}>
+                        {isCompleted ? <CheckCircle className="h-3.5 w-3.5" />
+                          : isCurrent ? <m.icon className="h-3.5 w-3.5 animate-spin-slow" />
+                          : <m.icon className="h-3.5 w-3.5" />}
                       </div>
-                      <span className={`text-[9px] text-center leading-tight ${isCurrent ? "text-primary" : "text-muted-foreground"}`}>
-                        {m.label}
-                      </span>
+                      <span className={`text-[9px] text-center leading-tight ${isCurrent ? "text-primary" : "text-muted-foreground"}`}>{m.label}</span>
                     </div>
                   );
                 })}
@@ -201,12 +195,12 @@ const LiveScan = () => {
             </CardContent>
           </Card>
 
-          {/* Live findings feed */}
+          {/* Findings feed */}
           <Card className="lg:col-span-2 bg-card border-border">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                 <CardTitle className="text-base">Live Findings</CardTitle>
-                <div className="flex items-center gap-3 text-xs">
+                <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="text-severity-critical font-medium">{severityCounts.critical} Critical</span>
                   <span className="text-severity-high font-medium">{severityCounts.high} High</span>
                   <span className="text-severity-medium font-medium">{severityCounts.medium} Medium</span>
@@ -217,17 +211,12 @@ const LiveScan = () => {
             <CardContent>
               <div ref={feedRef} className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                 {findings.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    {isActive ? "Waiting for findings..." : "No findings detected"}
-                  </p>
+                  <p className="text-sm text-muted-foreground text-center py-8">{isActive ? "Waiting for findings..." : "No findings detected"}</p>
                 ) : (
                   findings.map((f, i) => (
-                    <div
-                      key={f.findingId || i}
-                      className={`flex items-center gap-3 p-2.5 rounded-md bg-muted/30 animate-slide-in-right ${
-                        f.severity === "critical" ? "border-l-2 border-l-severity-critical" : ""
-                      }`}
-                    >
+                    <div key={f.findingId || i} className={`flex items-center gap-3 p-2.5 rounded-lg bg-muted/30 animate-slide-in-right ${
+                      f.severity === "critical" ? "border-l-2 border-l-severity-critical bg-severity-critical/5" : ""
+                    }`}>
                       <SeverityBadge severity={f.severity} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{f.title}</p>
@@ -246,15 +235,14 @@ const LiveScan = () => {
 
         {/* Sitemap */}
         <Card className="bg-card border-border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Sitemap Discovery</CardTitle>
-          </CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Sitemap Discovery</CardTitle></CardHeader>
           <CardContent>
             {nodes.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">Crawler discovering nodes...</p>
-            ) : (
-              <SitemapGraph nodes={nodes} />
-            )}
+              <div className="flex flex-col items-center py-8 space-y-2">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <p className="text-sm text-muted-foreground">Crawler discovering nodes...</p>
+              </div>
+            ) : <SitemapGraph nodes={nodes} />}
           </CardContent>
         </Card>
       </div>

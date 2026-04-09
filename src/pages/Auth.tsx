@@ -14,19 +14,19 @@ const Auth = () => {
   const navigate = useNavigate();
   const { signIn, signUp } = useAuthStore();
 
-  // Sign in state
   const [signInEmail, setSignInEmail] = useState("");
   const [signInPassword, setSignInPassword] = useState("");
   const [signInLoading, setSignInLoading] = useState(false);
   const [signInError, setSignInError] = useState("");
 
-  // Sign up state
   const [fullName, setFullName] = useState("");
   const [signUpEmail, setSignUpEmail] = useState("");
   const [signUpPassword, setSignUpPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [signUpLoading, setSignUpLoading] = useState(false);
   const [signUpError, setSignUpError] = useState("");
+
+  const [focused, setFocused] = useState(false);
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,7 +88,12 @@ const Auth = () => {
           <span className="text-2xl font-bold text-foreground">Origin</span>
         </div>
 
-        <Card className="bg-card border-border">
+        <Card
+          className="bg-card border-border transition-shadow duration-300"
+          style={{
+            boxShadow: focused ? "0 0 40px rgba(99,102,241,0.1)" : "none",
+          }}
+        >
           <Tabs defaultValue="signin">
             <CardHeader className="pb-0">
               <TabsList className="grid w-full grid-cols-2 bg-muted">
@@ -99,7 +104,7 @@ const Auth = () => {
 
             <CardContent className="pt-6">
               <TabsContent value="signin" className="mt-0 space-y-4">
-                <form onSubmit={handleSignIn} className="space-y-4">
+                <form onSubmit={handleSignIn} className="space-y-4" onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}>
                   <div className="space-y-2">
                     <Label htmlFor="si-email">Email</Label>
                     <Input
@@ -132,66 +137,37 @@ const Auth = () => {
                     />
                   </div>
                   {signInError && (
-                    <p className="text-xs text-severity-critical">{signInError}</p>
+                    <p className="text-xs text-severity-critical animate-error-slide">{signInError}</p>
                   )}
-                  <Button type="submit" className="w-full" disabled={signInLoading}>
-                    {signInLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Sign In
+                  <Button type="submit" className="w-full h-10" disabled={signInLoading}>
+                    {signInLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
                   </Button>
                 </form>
               </TabsContent>
 
               <TabsContent value="signup" className="mt-0 space-y-4">
-                <form onSubmit={handleSignUp} className="space-y-4">
+                <form onSubmit={handleSignUp} className="space-y-4" onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}>
                   <div className="space-y-2">
                     <Label htmlFor="su-name">Full Name</Label>
-                    <Input
-                      id="su-name"
-                      placeholder="John Doe"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      required
-                    />
+                    <Input id="su-name" placeholder="John Doe" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="su-email">Email</Label>
-                    <Input
-                      id="su-email"
-                      type="email"
-                      placeholder="you@example.com"
-                      value={signUpEmail}
-                      onChange={(e) => setSignUpEmail(e.target.value)}
-                      required
-                    />
+                    <Input id="su-email" type="email" placeholder="you@example.com" value={signUpEmail} onChange={(e) => setSignUpEmail(e.target.value)} required />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="su-password">Password</Label>
-                    <Input
-                      id="su-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={signUpPassword}
-                      onChange={(e) => setSignUpPassword(e.target.value)}
-                      required
-                    />
+                    <Input id="su-password" type="password" placeholder="••••••••" value={signUpPassword} onChange={(e) => setSignUpPassword(e.target.value)} required />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="su-confirm">Confirm Password</Label>
-                    <Input
-                      id="su-confirm"
-                      type="password"
-                      placeholder="••••••••"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      required
-                    />
+                    <Input id="su-confirm" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
                   </div>
                   {signUpError && (
-                    <p className="text-xs text-severity-critical">{signUpError}</p>
+                    <p className="text-xs text-severity-critical animate-error-slide">{signUpError}</p>
                   )}
-                  <Button type="submit" className="w-full" disabled={signUpLoading}>
-                    {signUpLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Create Account
+                  <Button type="submit" className="w-full h-10" disabled={signUpLoading}>
+                    {signUpLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create Account"}
                   </Button>
                 </form>
               </TabsContent>

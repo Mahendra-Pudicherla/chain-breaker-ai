@@ -1,3 +1,4 @@
+import React from "react";
 import type { ScanStats } from "@/types";
 
 interface SeverityDonutProps {
@@ -25,7 +26,7 @@ function describeArc(cx: number, cy: number, r: number, startAngle: number, endA
   return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 0 ${end.x} ${end.y}`;
 }
 
-const SeverityDonut = ({ stats, size = 160 }: SeverityDonutProps) => {
+const SeverityDonut = React.memo(({ stats, size = 160 }: SeverityDonutProps) => {
   const total = stats.total || 1;
   const cx = size / 2;
   const cy = size / 2;
@@ -46,7 +47,7 @@ const SeverityDonut = ({ stats, size = 160 }: SeverityDonutProps) => {
     .filter(Boolean);
 
   return (
-    <div className="flex items-center gap-6">
+    <div className="flex flex-col sm:flex-row items-center gap-6">
       <svg width={size} height={size} className="shrink-0">
         {stats.total === 0 ? (
           <circle cx={cx} cy={cy} r={r} fill="none" stroke="hsl(240,14%,19%)" strokeWidth={strokeWidth} />
@@ -83,6 +84,8 @@ const SeverityDonut = ({ stats, size = 160 }: SeverityDonutProps) => {
       </div>
     </div>
   );
-};
+});
+
+SeverityDonut.displayName = "SeverityDonut";
 
 export default SeverityDonut;

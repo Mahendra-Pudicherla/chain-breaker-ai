@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import type { SitemapNode } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,14 +25,14 @@ const typeColors: Record<string, string> = {
   asset: "#6b7280",
 };
 
-const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
-  const svgRef = useRef<SVGSVGElement>(null);
+const SitemapGraph = React.memo(({ nodes, interactive = true }: SitemapGraphProps) => {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [selected, setSelected] = useState<SitemapNode | null>(null);
   const frameRef = useRef<number>(0);
   const iterRef = useRef(0);
 
   useEffect(() => {
+    if (nodes.length === 0) return;
     const gn: GraphNode[] = nodes.map((n, i) => ({
       id: n.url,
       node: n,
@@ -43,7 +43,6 @@ const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
     }));
 
     iterRef.current = 0;
-
     const idxMap = new Map(gn.map((n, i) => [n.id, i]));
 
     const simulate = () => {
@@ -61,10 +60,8 @@ const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
           const force = 800 / (dist * dist);
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
-          gn[i].vx -= fx;
-          gn[i].vy -= fy;
-          gn[j].vx += fx;
-          gn[j].vy += fy;
+          gn[i].vx -= fx; gn[i].vy -= fy;
+          gn[j].vx += fx; gn[j].vy += fy;
         }
       }
 
@@ -75,7 +72,7 @@ const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
             const parent = gn[pi];
             const dx = parent.x - n.x;
             const dy = parent.y - n.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
             const force = (dist - 80) * 0.02;
             n.vx += (dx / dist) * force;
             n.vy += (dy / dist) * force;
@@ -88,10 +85,8 @@ const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
       for (const n of gn) {
         n.vx += (300 - n.x) * 0.001;
         n.vy += (200 - n.y) * 0.001;
-        n.vx *= 0.9;
-        n.vy *= 0.9;
-        n.x += n.vx;
-        n.y += n.vy;
+        n.vx *= 0.9; n.vy *= 0.9;
+        n.x += n.vx; n.y += n.vy;
         n.x = Math.max(20, Math.min(580, n.x));
         n.y = Math.max(20, Math.min(380, n.y));
       }
@@ -108,68 +103,54 @@ const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
 
   return (
     <div className="relative">
-      <svg
-        ref={svgRef}
-        viewBox="0 0 600 400"
-        className="w-full h-auto border border-border rounded-lg bg-card"
-      >
+      <svg viewBox="0 0 600 400" className="w-full min-h-[300px] border border-border rounded-xl bg-[#0d0d14]">
         {graphNodes.map((gn) => {
           if (!gn.node.parentUrl) return null;
           const pi = idxMap.get(gn.node.parentUrl);
           if (pi === undefined) return null;
           const parent = graphNodes[pi];
           return (
-            <line
-              key={`edge-${gn.id}`}
-              x1={parent.x}
-              y1={parent.y}
-              x2={gn.x}
-              y2={gn.y}
-              stroke="hsl(240,14%,24%)"
-              strokeWidth="1"
-            />
+            <line key={`edge-${gn.id}`} x1={parent.x} y1={parent.y} x2={gn.x} y2={gn.y} stroke="hsl(240,14%,24%)" strokeWidth="1" />
           );
         })}
 
         {graphNodes.map((gn) => (
-          <g
-            key={gn.id}
-            onClick={() => interactive && setSelected(gn.node)}
-            className={interactive ? "cursor-pointer" : ""}
-          >
+          <g key={gn.id} onClick={() => interactive && setSelected(gn.node)} className={interactive ? "cursor-pointer" : ""}>
             {gn.node.vulnerable && (
-              <circle cx={gn.x} cy={gn.y} r="12" fill="none" stroke="hsl(0,84%,60%)" strokeWidth="2" opacity="0.6" />
+              <circle cx={gn.x} cy={gn.y} r="14" fill="none" stroke="hsl(0,84%,60%)" strokeWidth="2" opacity="0.4">
+                <animate attributeName="r" values="12;18;12" dur="2s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.5;0;0.5" dur="2s" repeatCount="indefinite" />
+              </circle>
             )}
             <circle
-              cx={gn.x}
-              cy={gn.y}
-              r="8"
+              cx={gn.x} cy={gn.y} r="8"
               fill={typeColors[gn.node.type] ?? typeColors.asset}
               opacity={gn.node.scanned ? 1 : 0.4}
+              className="animate-scale-in"
             />
           </g>
         ))}
       </svg>
 
-      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
         {Object.entries(typeColors).map(([type, color]) => (
-          <div key={type} className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+          <div key={type} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
             <span className="capitalize">{type}</span>
           </div>
         ))}
       </div>
 
       {selected && interactive && (
-        <Card className="absolute top-2 right-2 w-64 p-4 bg-surface-elevated border-border space-y-2">
+        <Card className="absolute top-2 right-2 w-64 p-4 bg-surface-elevated border-border space-y-2 animate-fade-in z-10">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-foreground">Node Details</span>
-            <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground">
+            <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground" aria-label="Close details">
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
           <p className="text-xs text-muted-foreground break-all">{selected.url}</p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Badge variant="outline" className="text-[10px] capitalize">{selected.type}</Badge>
             <Badge variant="outline" className="text-[10px]">{selected.method}</Badge>
             <Badge variant="outline" className="text-[10px]">{selected.statusCode}</Badge>
@@ -183,6 +164,8 @@ const SitemapGraph = ({ nodes, interactive = true }: SitemapGraphProps) => {
       )}
     </div>
   );
-};
+});
+
+SitemapGraph.displayName = "SitemapGraph";
 
 export default SitemapGraph;
