@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/server.main.js",
   "scripts": {
+    "build": "npx playwright install chromium --with-deps",
     "dev": "node --watch src/server.main.js",
     "start": "node src/server.main.js"
   },
