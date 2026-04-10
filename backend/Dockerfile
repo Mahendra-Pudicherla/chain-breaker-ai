@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.49.1-jammy
+FROM node:22-bookworm
 
 # Set the working directory
 WORKDIR /app
@@ -8,6 +8,9 @@ COPY package*.json ./
 
 # Install explicit Node dependencies
 RUN npm install
+
+# Install Playwright browser and OS dependencies
+RUN npx playwright install chromium --with-deps
 
 # Copy all the backend code
 COPY . .
