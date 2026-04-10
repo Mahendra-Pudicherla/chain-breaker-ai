@@ -1,0 +1,735 @@
+# Chain Breaker AI — Cursor AI Rules
+# Every feature in this file must be implemented with REAL logic.
+# No mock data. No hardcoded findings. All results come from live HTTP requests to the target URL.
+# Read this entire file before writing a single line of code.
+
+---
+
+## PROJECT CONTEXT
+
+This is "Chain Breaker AI" — an AI-powered web vulnerability scanner.
+- Backend: Node.js, Express, SQLite (via backend/src/storage/database.js)
+- Frontend: React + TypeScript + Tailwind + shadcn/ui
+- Scan orchestrator: backend/src/scan/orchestrator.js
+- All new modules go in: backend/src/scan/modules/
+- After writing each file, wire it into orchestrator.js
+
+The scan pipeline order in orchestrator.js must be:
+1. httpCrawler.js (already exists — crawls and builds nodes)
+2. browserWorker.js (already exists — Playwright fallback)
+3. securityHeaders.js (already exists)
+4. authChecks.js (already exists)
+5. reflectionChecks.js (already exists)
+6. ** sqlInjection.js (NEW — add here)
+7. ** xssReflected.js (NEW — add here)
+8. ** csrfChecks.js (NEW — add here)
+9. ** idorChecks.js (NEW — add here)
+10. ** sensitiveData.js (NEW — add here)
+11. ** rbacTester.js (NEW — add here)
+12. ** aiEnricher.js (NEW — runs last, enriches all findings via Claude API)
+13. ** aiSummary.js (NEW — writes one summary to scan record)
+14. ** emailNotifier.js (NEW — sends Resend email on completion)
+
+---
+
+## RULE 1 — sqlInjection.js
+
+FILE: backend/src/scan/modules/sqlInjection.js
+
+PURPOSE: Test every URL parameter and discovered form field for SQL injection by sending real payloads and inspecting real HTTP responses.
+
+IMPLEMENTATION RULES:
+- Import the nodes array from the current scan (pages and forms discovered by crawler).
+- For every node that has query parameters in the URL (e.g. ?id=1&user=admin), extract each parameter.
+- Also check sitemapNodes for any "form" type nodes and extract their input fields.
+- For each parameter, send 3 separate HTTP GET/POST requests replacing the parameter value with each of these payloads:
+  Payload 1: ' OR '1'='1
+  Payload 2: 1; DROP TABLE users--
+  Payload 3: ' UNION SELECT null,null,null--
+- In each response body, search for any of these SQL error signatures (case-insensitive):
+  "you have an error in your sql syntax"
+  "warning: mysql"
+  "unclosed quotation mark"
+  "quoted string not properly terminated"
+  "pg_query()"
+  "sqlite3.operationalerror"
+  "ora-01756"
+  "microsoft ole db provider for sql server"
+  "syntax error" (only if near SQL keywords)
+- If any signature matches: create a finding object and save it to the database.
+- The finding object must include:
+  title: "SQL Injection"
+  type: "sqli"
+  severity: "critical"
+  url: the full URL tested
+  method: "GET" or "POST"
+  parameter: the name of the vulnerable parameter
+  payload: the exact payload string that triggered the error
+  evidence: first 500 chars of the response body that contains the error string
+  description: "SQL injection vulnerability detected in parameter [name]. The application returned a database error when a crafted SQL payload was injected, indicating the input is not properly sanitised before being used in a SQL query."
+- If no SQL error found but response status differs significantly (200 → 500), still create a finding with severity "high" and note "Possible SQL injection — server returned error response to SQL payload."
+- Use fetch() with a 8000ms timeout. On network error, skip that node silently.
+- Do NOT test parameters named: _token, csrf, authenticity_token, __RequestVerificationToken (these are CSRF tokens, not data params).
+- Rate limit: wait 300ms between each request using a sleep helper.
+- Export: module.exports = async function runSqlInjection(scanId, nodes, scanConfig, db)
+
+```javascript
+// backend/src/scan/modules/sqlInjection.js
+const PAYLOADS = [
+  "' OR '1'='1",
+  "1; DROP TABLE users--",
+  "' UNION SELECT null,null,null--"
+];
+
+const SQL_ERROR_SIGNATURES = [
+  "you have an error in your sql syntax",
+  "warning: mysql",
+  "unclosed quotation mark",
+  "quoted string not properly terminated",
+  "pg_query()",
+  "sqlite3.operationalerror",
+  "ora-01756",
+  "microsoft ole db provider for sql server"
+];
+
+const SKIP_PARAMS = new Set(["_token","csrf","authenticity_token","__requestverificationtoken"]);
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function testParam(baseUrl, paramName, method, headers) {
+  const results = [];
+  for (const payload of PAYLOADS) {
+    await sleep(300);
+    try {
+      let response;
+      if (method === "GET") {
+        const url = new URL(baseUrl);
+        url.searchParams.set(paramName, payload);
+        response = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(8000) });
+      } else {
+        const body = new URLSearchParams({ [paramName]: payload });
+        response = await fetch(baseUrl, { method: "POST", headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString(), signal: AbortSignal.timeout(8000) });
+      }
+      const text = (await response.text()).toLowerCase();
+      const matched = SQL_ERROR_SIGNATURES.find(sig => text.includes(sig));
+      if (matched) {
+        results.push({ payload, evidence: text.substring(0, 500), severity: "critical", reason: matched });
+      } else if (response.status >= 500) {
+        results.push({ payload, evidence: `HTTP ${response.status}`, severity: "high", reason: "server_error" });
+      }
+    } catch (e) { /* timeout or network error, skip */ }
+  }
+  return results;
+}
+
+module.exports = async function runSqlInjection(scanId, nodes, scanConfig, db) {
+  const findings = [];
+  for (const node of nodes) {
+    if (!node.url) continue;
+    let params = [];
+    try {
+      const u = new URL(node.url);
+      params = [...u.searchParams.entries()].filter(([k]) => !SKIP_PARAMS.has(k.toLowerCase()));
+    } catch { continue; }
+    if (params.length === 0) continue;
+
+    const headers = {};
+    if (scanConfig?.authConfig?.type === "jwt" && scanConfig.authConfig.token) {
+      headers["Authorization"] = `Bearer ${scanConfig.authConfig.token}`;
+    }
+
+    for (const [paramName] of params) {
+      const hits = await testParam(node.url, paramName, node.method || "GET", headers);
+      for (const hit of hits) {
+        const finding = {
+          scanId,
+          title: "SQL Injection",
+          type: "sqli",
+          severity: hit.severity,
+          url: node.url,
+          method: node.method || "GET",
+          parameter: paramName,
+          payload: hit.payload,
+          evidence: hit.evidence,
+          description: `SQL injection vulnerability detected in parameter "${paramName}". The application returned a database error when a crafted SQL payload was injected.`,
+          aiExplanation: "",
+          aiRemediation: "",
+          businessImpact: "",
+          cvssScore: hit.severity === "critical" ? 9.8 : 7.5,
+          businessRiskScore: 0,
+          falsePositiveConfidence: 0.05,
+          isConfirmed: true,
+          createdAt: new Date().toISOString()
+        };
+        findings.push(finding);
+        await db.saveFinding(finding);
+      }
+    }
+  }
+  return findings;
+};
+```
+
+---
+
+## RULE 2 — xssReflected.js
+
+FILE: backend/src/scan/modules/xssReflected.js
+
+PURPOSE: Test every URL parameter for reflected XSS by injecting payloads and checking if they appear unescaped in the response HTML.
+
+IMPLEMENTATION RULES:
+- For every node with URL parameters, inject each XSS payload into each parameter via GET request.
+- Payloads to test:
+  <script>alert('xss')</script>
+  <img src=x onerror=alert(1)>
+  "><svg onload=alert(1)>
+  javascript:alert(1)
+- After each request, check the response body for the EXACT payload string appearing unescaped.
+  Unescaped means: the raw payload appears in the HTML without HTML entity encoding.
+  Check specifically: the `<`, `>`, and `"` characters are NOT encoded as &lt; &gt; &quot;
+- If the raw payload is found in the response body: it is a confirmed reflected XSS.
+- Finding severity: "high"
+- Finding object fields:
+  title: "Reflected Cross-Site Scripting (XSS)"
+  type: "xss"
+  severity: "high"
+  url: full tested URL
+  method: "GET"
+  parameter: vulnerable param name
+  payload: the payload that reflected
+  evidence: 300-char window of response body around where payload was found
+  description: "The application reflects user-supplied input in the HTML response without proper encoding. An attacker can inject malicious scripts that execute in the victim's browser."
+- Also check response Content-Type. If Content-Type is application/json and payload reflects, downgrade to "medium" (JSON responses are less directly exploitable for XSS).
+- Export: module.exports = async function runXssReflected(scanId, nodes, scanConfig, db)
+
+---
+
+## RULE 3 — csrfChecks.js
+
+FILE: backend/src/scan/modules/csrfChecks.js
+
+PURPOSE: Detect forms and state-changing endpoints that lack CSRF protection.
+
+IMPLEMENTATION RULES:
+- From the nodes array, find all nodes with type "form" or method "POST"/"PUT"/"DELETE".
+- For each such node:
+  1. Fetch the page HTML with a GET request.
+  2. Parse the HTML and look for <form> elements.
+  3. For each form with method="post", check if any hidden input has a name matching these patterns (case-insensitive): csrf, _token, authenticity_token, requestverificationtoken, nonce, __csrf
+  4. Also check the response headers for: X-CSRF-Token, X-XSRF-TOKEN cookie.
+  5. If NO csrf token found in form AND NO csrf-related cookie in response: it is a potential CSRF vulnerability.
+- Also check: if the endpoint accepts state changes via GET request (e.g. /delete?id=1, /logout via GET) — flag as CSRF risk.
+- Finding object:
+  title: "Missing CSRF Protection"
+  type: "csrf"
+  severity: "medium"
+  url: the form action URL
+  method: "POST"
+  parameter: "N/A"
+  payload: "No CSRF token present"
+  evidence: the raw HTML of the form element (first 400 chars)
+  description: "The form at this URL does not include a CSRF token. An attacker can trick authenticated users into submitting malicious requests to this endpoint."
+- Export: module.exports = async function runCsrfChecks(scanId, nodes, scanConfig, db)
+
+---
+
+## RULE 4 — idorChecks.js
+
+FILE: backend/src/scan/modules/idorChecks.js
+
+PURPOSE: Detect Insecure Direct Object Reference by finding numeric IDs in URLs and testing access with incremented/decremented values.
+
+IMPLEMENTATION RULES:
+- Scan all node URLs for patterns containing numeric IDs:
+  - Path segments: /users/123, /orders/456, /posts/7
+  - Query params: ?id=5, ?user_id=10, ?record=3
+  - Use regex: /\/(\d+)(?:\/|$|\?)/ for path IDs and check all numeric query params.
+- For each numeric ID found (skip IDs that look like years: 1900–2100):
+  1. Record the original response status code and body length from the node data.
+  2. Send a new GET request with the ID incremented by 1 (e.g. 123 → 124).
+  3. Send another with ID decremented by 1 (123 → 122).
+  4. Also try ID = 1 (the first record, often admin data).
+  5. If any of these requests returns:
+     - HTTP 200 with response body length > 100 bytes
+     - AND the body is different from a known "not found" or "access denied" pattern
+     - AND the original request was made WITH auth headers
+     Then: potential IDOR detected.
+- "Access denied" patterns to check response body for (means NOT an IDOR):
+  "not found", "404", "access denied", "forbidden", "unauthorized", "permission denied"
+- Finding severity: "high"
+- Finding object:
+  title: "Insecure Direct Object Reference (IDOR)"
+  type: "idor"
+  severity: "high"
+  url: the tested URL with modified ID
+  method: "GET"
+  parameter: the parameter or path segment containing the ID
+  payload: "ID changed from [original] to [tested]"
+  evidence: first 300 chars of response body
+  description: "The application exposes internal object references via URL parameters. By modifying the ID, it may be possible to access data belonging to other users."
+- If no auth headers configured: skip IDOR checks (can't prove auth bypass without auth). Log a warning instead.
+- Export: module.exports = async function runIdorChecks(scanId, nodes, scanConfig, db)
+
+---
+
+## RULE 5 — sensitiveData.js
+
+FILE: backend/src/scan/modules/sensitiveData.js
+
+PURPOSE: Scan all HTTP responses already collected by the crawler for accidental exposure of sensitive data.
+
+IMPLEMENTATION RULES:
+- Loop through all nodes in the scan that have a responseBody or evidence field stored by the crawler.
+- For each node response body, run these regex patterns:
+
+  AWS Key:       /AKIA[0-9A-Z]{16}/g
+  Private Key:   /-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----/g
+  Generic secret: /(secret|api_key|apikey|api-key|password|passwd|pwd)\s*[:=]\s*["']?[a-zA-Z0-9_\-]{8,}/gi
+  JWT token:     /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g
+  Email list:    find 3+ different email addresses in same response (suggests a data dump)
+  Stack trace:   /(at \w+\.\w+\s*\(.*\.js:\d+:\d+\)|Traceback \(most recent call last\)|Exception in thread)/g
+  Internal IP:   /\b(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)\b/g
+  MongoDB URI:   /mongodb(\+srv)?:\/\/[^"'\s]+/g
+  Connection string: /(Server=.*;Database=.*;|host=.*;dbname=)/gi
+
+- Also fetch the following well-known sensitive paths with a GET request for each (add to existing crawl, do not re-crawl all nodes):
+  /.env
+  /.git/config
+  /config.php
+  /wp-config.php
+  /phpinfo.php
+  /server-status
+  /admin/config
+  /api/debug
+  /health (check for sensitive info in response)
+  /actuator/env (Spring Boot)
+  /actuator/mappings
+
+- If any well-known path returns HTTP 200 with body length > 50: flag as finding.
+- If any regex matches in any response: create finding.
+- Severity mapping:
+  AWS key / Private key / MongoDB URI: "critical"
+  Stack trace / connection string: "high"
+  JWT in response body / internal IP: "medium"
+  Email list / generic secret pattern: "high"
+  Well-known sensitive file exposed: "high"
+- Finding object fields:
+  title: e.g. "Sensitive Data Exposure — AWS Key Detected" or "Exposed .env File"
+  type: "sensitive_data"
+  severity: per above mapping
+  url: the page URL where data was found
+  method: "GET"
+  parameter: "response_body"
+  payload: "N/A"
+  evidence: the matched string (MASKED: show first 4 chars + ***** for secrets)
+  description: descriptive text explaining what was found and why it is dangerous
+- Export: module.exports = async function runSensitiveData(scanId, nodes, scanConfig, db)
+
+---
+
+## RULE 6 — rbacTester.js
+
+FILE: backend/src/scan/modules/rbacTester.js
+
+PURPOSE: Test for RBAC (role-based access control) failures by replaying requests with tokens from different roles and detecting unauthorized access.
+
+IMPLEMENTATION RULES:
+- Requires: scanConfig.roles array to have at least 2 role entries. If less than 2 roles, skip entirely and return [].
+- Step 1: Crawl the target using the FIRST role (highest privilege, e.g. Admin). Collect all URLs that returned HTTP 200.
+- Step 2: For each URL collected, replay the request using the SECOND role's token (lower privilege, e.g. Authenticated User).
+  - If second role returns 200 → this might be a valid shared resource, check further.
+  - If second role returns 200 AND the first role URL contains keywords like: admin, manage, dashboard, config, settings, user, account, delete, update, create, panel → flag as RBAC violation.
+- Step 3: Also replay with NO token (unauthenticated) for any URL containing admin/manage keywords.
+  - If unauthenticated request returns 200 → flag as critical RBAC violation.
+- For each violation:
+  Finding object:
+  title: "Broken Access Control — Unauthorized Role Access" (or "Unauthenticated Access" if no token worked)
+  type: "rbac"
+  severity: "critical" (if unauthenticated) or "high" (if wrong role)
+  url: the accessed URL
+  method: "GET"
+  parameter: "Authorization header / role token"
+  payload: "Role: [role name used] — Token: [first 10 chars of token]..."
+  evidence: "HTTP [status] returned for [role name]. Expected 403 or 401."
+  description: "The endpoint [url] is accessible by [role] but should be restricted. This indicates a broken access control vulnerability where role boundaries are not enforced server-side."
+- Build role headers:
+  If role has token field: use Authorization: Bearer [token]
+  If role has cookies field: use Cookie: [cookies]
+- Export: module.exports = async function runRbacTester(scanId, nodes, scanConfig, db)
+
+---
+
+## RULE 7 — aiEnricher.js
+
+FILE: backend/src/scan/modules/aiEnricher.js
+
+PURPOSE: After all vuln modules run, send each raw finding to the Claude API and get back enriched data. Write the enriched fields back to the database. This is what makes Chain Breaker AI intelligent.
+
+IMPLEMENTATION RULES:
+- Load all findings for this scanId from the database that have empty aiExplanation field.
+- Group them into batches of 5 findings to avoid rate limits.
+- For each batch, make ONE Claude API call with all 5 findings in the prompt.
+- Claude API call:
+  - URL: https://api.anthropic.com/v1/messages
+  - Method: POST
+  - Headers:
+    x-api-key: process.env.CLAUDE_API_KEY or scanConfig.claudeApiKey
+    anthropic-version: 2023-06-01
+    content-type: application/json
+  - Body:
+    model: "claude-opus-4-5"
+    max_tokens: 2000
+    system: "You are a senior application security engineer. Analyze the provided vulnerability findings and return ONLY a valid JSON array with no markdown, no preamble, no explanation outside JSON."
+    messages: [{ role: "user", content: [the prompt below] }]
+
+- Prompt template (insert real finding data):
+  """
+  Analyze these security findings and for each return enriched data. Return ONLY a JSON array in this exact format, nothing else:
+  [
+    {
+      "findingId": "...",
+      "aiExplanation": "2-3 sentence plain English explanation of what this vulnerability is and how it works",
+      "aiRemediation": "Specific step-by-step fix for a developer. Include code example if relevant.",
+      "businessImpact": "What a non-technical manager needs to know about the business risk",
+      "businessRiskScore": 85,
+      "falsePositiveConfidence": 0.05,
+      "attackChain": ["Step 1: attacker does X", "Step 2: attacker does Y", "Step 3: attacker achieves Z"]
+    }
+  ]
+
+  Findings to analyze:
+  [insert JSON.stringify of the batch of findings]
+  """
+
+- After receiving the Claude response:
+  - Parse the JSON array from the response content.
+  - For each item in the array, find the matching finding by findingId.
+  - Update that finding in the database with: aiExplanation, aiRemediation, businessImpact, businessRiskScore, falsePositiveConfidence, attackChain.
+  - Wait 1000ms between batches to respect rate limits.
+
+- Error handling:
+  - If Claude API returns an error: log it, continue to next batch, leave those findings un-enriched.
+  - If JSON parse fails: try to extract JSON from the response text using regex before giving up.
+  - Never crash the scan if AI enrichment fails — it is optional enrichment, not core scanning.
+
+- Export: module.exports = async function runAiEnricher(scanId, scanConfig, db)
+
+---
+
+## RULE 8 — aiSummary.js
+
+FILE: backend/src/scan/modules/aiSummary.js
+
+PURPOSE: After enrichment is complete, make one Claude API call to write a human-readable executive summary for the scan. Save it to the scan record.
+
+IMPLEMENTATION RULES:
+- Load the final stats from the scan: total findings, counts per severity, target URL, modules run.
+- Load the top 5 most critical findings (by severity and cvssScore).
+- Make ONE Claude API call:
+  - Same headers as aiEnricher.js
+  - Prompt:
+    """
+    You are a senior security consultant writing an executive summary for a client.
+    Write a 3-sentence executive summary of this security assessment. Use plain business language, not technical jargon.
+    Be specific about severity and risk level. Do not use bullet points. Return only the summary text, nothing else.
+
+    Scan target: [targetUrl]
+    Scan date: [today]
+    Total findings: [n] (Critical: [n], High: [n], Medium: [n], Low: [n])
+    Most critical issues: [list titles of top 5 findings]
+    """
+  - Take the text response and save it as the `aiSummary` field on the scan record in the database.
+  - If Claude API fails: set aiSummary to a generated fallback: "Automated security scan completed on [targetUrl]. [n] vulnerabilities were detected across [n] pages and endpoints. Manual review is recommended for [severity] severity findings."
+
+- Export: module.exports = async function runAiSummary(scanId, scanConfig, db)
+
+---
+
+## RULE 9 — emailNotifier.js
+
+FILE: backend/src/scan/modules/emailNotifier.js
+
+PURPOSE: Send a real email via Resend API when a scan completes.
+
+IMPLEMENTATION RULES:
+- Only send if: scanConfig.notificationEmail is set AND process.env.RESEND_API_KEY or scanConfig.resendApiKey is set.
+- Load the final scan stats and top 5 findings from the database.
+- Make a POST request to Resend API:
+  URL: https://api.resend.com/emails
+  Headers:
+    Authorization: Bearer [resend api key]
+    Content-Type: application/json
+  Body:
+    from: "Chain Breaker AI <scan@yourdomain.com>"  (use process.env.RESEND_FROM_EMAIL or "onboarding@resend.dev" as fallback)
+    to: [scanConfig.notificationEmail]
+    subject: "Chain Breaker AI Scan Complete — [criticalCount] Critical Issues Found on [targetUrl]"
+    html: [generate HTML below]
+
+- HTML email template (generate this as a string):
+  ```html
+  <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#0a0a0f;color:#f1f0ff;padding:24px;border-radius:12px">
+    <h1 style="color:#22d3ee;margin-bottom:4px">Chain Breaker AI Security Scan Complete</h1>
+    <p style="color:#9896b0;margin-top:0">Scan completed on [date]</p>
+    <div style="background:#111118;border:1px solid #2a2a3a;border-radius:8px;padding:16px;margin:16px 0">
+      <p style="margin:4px 0"><strong>Target:</strong> [targetUrl]</p>
+      <p style="margin:4px 0"><strong>Duration:</strong> [duration]</p>
+      <p style="margin:4px 0"><strong>Total Findings:</strong> [total]</p>
+    </div>
+    <div style="display:flex;gap:8px;margin:16px 0">
+      <div style="background:#ef444420;border:1px solid #ef4444;border-radius:8px;padding:12px;flex:1;text-align:center">
+        <div style="font-size:28px;font-weight:bold;color:#ef4444">[critical]</div>
+        <div style="color:#9896b0;font-size:12px">Critical</div>
+      </div>
+      <div style="background:#f9731620;border:1px solid #f97316;border-radius:8px;padding:12px;flex:1;text-align:center">
+        <div style="font-size:28px;font-weight:bold;color:#f97316">[high]</div>
+        <div style="color:#9896b0;font-size:12px">High</div>
+      </div>
+      <div style="background:#eab30820;border:1px solid #eab308;border-radius:8px;padding:12px;flex:1;text-align:center">
+        <div style="font-size:28px;font-weight:bold;color:#eab308">[medium]</div>
+        <div style="color:#9896b0;font-size:12px">Medium</div>
+      </div>
+      <div style="background:#22c55e20;border:1px solid #22c55e;border-radius:8px;padding:12px;flex:1;text-align:center">
+        <div style="font-size:28px;font-weight:bold;color:#22c55e">[low]</div>
+        <div style="color:#9896b0;font-size:12px">Low</div>
+      </div>
+    </div>
+    <h3 style="color:#f1f0ff">Top Critical Findings</h3>
+    [for each top finding: <div style="border-left:3px solid #ef4444;padding:8px 12px;margin:8px 0;background:#111118"><strong>[title]</strong><br><span style="color:#9896b0;font-size:12px">[url]</span></div>]
+    <a href="[reportUrl]" style="display:inline-block;background:#6366f1;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:16px">View Full Report</a>
+    <p style="color:#5a5870;font-size:11px;margin-top:24px">Sent by Chain Breaker AI</p>
+  </div>
+  ```
+
+- Replace all [placeholders] with real values from the scan and findings.
+- reportUrl = process.env.FRONTEND_URL + "/scan/" + scanId + "/report"
+- If Resend API returns error: log the error but do NOT throw — scan is already complete.
+- Export: module.exports = async function sendEmailNotification(scanId, scanConfig, db)
+
+---
+
+## RULE 10 — Wire everything into orchestrator.js
+
+FILE: backend/src/scan/orchestrator.js
+
+After writing all new modules, update orchestrator.js to:
+
+1. Import all new modules at the top:
+```javascript
+const runSqlInjection = require('./modules/sqlInjection');
+const runXssReflected = require('./modules/xssReflected');
+const runCsrfChecks = require('./modules/csrfChecks');
+const runIdorChecks = require('./modules/idorChecks');
+const runSensitiveData = require('./modules/sensitiveData');
+const runRbacTester = require('./modules/rbacTester');
+const runAiEnricher = require('./modules/aiEnricher');
+const runAiSummary = require('./modules/aiSummary');
+const sendEmailNotification = require('./modules/emailNotifier');
+```
+
+2. In the scan execution pipeline, after existing modules run, add in this order:
+```javascript
+// Update progress and currentModule before each new module
+await db.updateScan(scanId, { progress: 40, currentModule: 'SQL Injection Testing' });
+await runSqlInjection(scanId, nodes, scan.config, db);
+
+await db.updateScan(scanId, { progress: 50, currentModule: 'XSS Testing' });
+await runXssReflected(scanId, nodes, scan.config, db);
+
+await db.updateScan(scanId, { progress: 58, currentModule: 'CSRF Detection' });
+await runCsrfChecks(scanId, nodes, scan.config, db);
+
+await db.updateScan(scanId, { progress: 64, currentModule: 'IDOR Testing' });
+await runIdorChecks(scanId, nodes, scan.config, db);
+
+await db.updateScan(scanId, { progress: 70, currentModule: 'Sensitive Data Scan' });
+await runSensitiveData(scanId, nodes, scan.config, db);
+
+await db.updateScan(scanId, { progress: 76, currentModule: 'RBAC Role Testing' });
+await runRbacTester(scanId, nodes, scan.config, db);
+
+await db.updateScan(scanId, { progress: 84, currentModule: 'AI Analysis' });
+await runAiEnricher(scanId, scan.config, db);
+
+await db.updateScan(scanId, { progress: 94, currentModule: 'Generating Summary' });
+await runAiSummary(scanId, scan.config, db);
+```
+
+3. After status is set to "completed":
+```javascript
+// Recalculate final stats from all findings
+const allFindings = await db.getFindingsByScanId(scanId);
+const stats = { critical: 0, high: 0, medium: 0, low: 0, info: 0, total: allFindings.length };
+for (const f of allFindings) { if (stats[f.severity] !== undefined) stats[f.severity]++; }
+await db.updateScan(scanId, { stats: JSON.stringify(stats), status: 'completed', progress: 100, completedAt: new Date().toISOString() });
+
+// Send email notification (non-blocking)
+sendEmailNotification(scanId, scan.config, db).catch(e => console.error('Email notification failed:', e));
+```
+
+---
+
+## RULE 11 — PDF Export on Report Page
+
+FILE: frontend/src/pages/Report.tsx
+
+Add a working "Download PDF" button using jsPDF + html2canvas:
+
+```typescript
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+
+const handleDownloadPdf = async () => {
+  const reportElement = document.getElementById('report-content');
+  if (!reportElement) return;
+
+  // Show loading toast
+  toast({ title: "Generating PDF...", description: "Please wait", variant: "default" });
+
+  try {
+    const canvas = await html2canvas(reportElement, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#0a0a0f',
+      logging: false,
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    const fileName = `origin-report-${scan?.targetUrl?.replace(/[^a-z0-9]/gi, '-')}-${new Date().toISOString().split('T')[0]}.pdf`;
+    pdf.save(fileName);
+    toast({ title: "PDF Downloaded", description: fileName, variant: "default" });
+  } catch (error) {
+    toast({ title: "PDF Export Failed", description: "Try again or use browser print", variant: "destructive" });
+  }
+};
+```
+
+Install if not already present:
+```bash
+npm install jspdf html2canvas
+```
+
+Wrap the main report content in:
+```tsx
+<div id="report-content">
+  {/* all report sections */}
+</div>
+```
+
+---
+
+## RULE 12 — Environment Variables
+
+FILE: backend/.env (create if not exists)
+
+```
+PORT=3001
+CLAUDE_API_KEY=sk-ant-your-key-here
+RESEND_API_KEY=re_your-key-here
+RESEND_FROM_EMAIL=onboarding@resend.dev
+FRONTEND_URL=http://localhost:5173
+```
+
+FILE: frontend/.env (create if not exists)
+
+```
+VITE_API_BASE_URL=http://localhost:3001
+VITE_FIREBASE_API_KEY=your-key
+VITE_FIREBASE_AUTH_DOMAIN=your-domain
+VITE_FIREBASE_PROJECT_ID=your-project
+VITE_FIREBASE_STORAGE_BUCKET=your-bucket
+VITE_FIREBASE_MESSAGING_SENDER_ID=your-id
+VITE_FIREBASE_APP_ID=your-app-id
+```
+
+---
+
+## RULE 13 — database.js helpers needed
+
+FILE: backend/src/storage/database.js
+
+Ensure these methods exist (add if missing):
+
+- saveFinding(finding): INSERT finding into findings table. finding.id = uuid if not provided.
+- getFindingsByScanId(scanId): SELECT * FROM findings WHERE scanId = ? ORDER BY severity ASC
+- updateFinding(findingId, fields): UPDATE findings SET [fields] WHERE id = ?
+- updateScan(scanId, fields): UPDATE scans SET [fields] WHERE id = ?
+- getScanById(scanId): SELECT * FROM scans WHERE id = ?
+- getNodesByScanId(scanId): SELECT * FROM nodes WHERE scanId = ?
+
+All methods must return Promises. Use SQLite's db.run/db.get/db.all with promisify or use better-sqlite3 synchronous API — be consistent with what is already in the file.
+
+---
+
+## RULE 14 — Safety: Never test against real production sites by default
+
+FILE: backend/src/utils/safety.js
+
+Add to the existing safety check:
+
+```javascript
+const ALLOWED_TEST_TARGETS = [
+  'localhost',
+  '127.0.0.1',
+  'dvwa',
+  '0.0.0.0',
+  'testphp.vulnweb.com',   // ACUNETIX test site — intentionally vulnerable
+  'demo.testfire.net',      // IBM test site — intentionally vulnerable
+  'juice-shop.herokuapp.com' // OWASP Juice Shop — intentionally vulnerable
+];
+
+// For SQLi and XSS modules, only fire ACTIVE payloads against:
+// 1. localhost/internal IPs
+// 2. Known intentional test targets above
+// 3. Sites where the user has explicitly confirmed they own the target
+// (Check scanConfig.ownershipConfirmed === true)
+
+// For all other targets: run PASSIVE checks only
+// (security headers, sensitive data regex on responses, CSRF form analysis)
+// Do NOT send SQLi/XSS payloads to unknown external sites
+```
+
+Add `ownershipConfirmed: boolean` to the scan config schema and NewScan form.
+In the NewScan form Step 1, add a required checkbox for non-localhost targets:
+"I confirm I own this website or have explicit written permission to perform security testing."
+This checkbox must be checked before Launch Scan is enabled.
+
+---
+
+## FINAL CHECKLIST — Run in this order after implementing all rules:
+
+1. `cd backend && npm install` (ensure all deps present)
+2. `cd frontend && npm install jspdf html2canvas` 
+3. Start backend: `node src/server.main.js`
+4. Start frontend: `npm run dev`
+5. Open DVWA in Docker: `docker run -p 8080:80 vulnerables/web-dvwa`
+6. Log in to DVWA at http://localhost:8080, set Security Level to "Low" in DVWA Security tab
+7. In Chain Breaker AI: create new scan targeting http://localhost:8080
+8. Enable ownership confirmation checkbox
+9. Use auth config: Session type, login URL: http://localhost:8080/login.php, user: admin, pass: password
+10. Launch scan and verify in real time:
+    - Progress bar moves through all modules
+    - SQLi findings appear for DVWA's login and search forms
+    - XSS findings appear for DVWA's XSS reflected page
+    - Sensitive data findings appear for DVWA's PHP info page
+    - AI enrichment runs and populates explanation/remediation fields
+    - Email arrives (if Resend configured)
+    - PDF downloads successfully from Report page

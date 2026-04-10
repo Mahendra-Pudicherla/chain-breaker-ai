@@ -1,0 +1,15 @@
+{
+  "name": "chain-breaker-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/server.main.js",
+  "scripts": {
+    "dev": "node --watch src/server.main.js",
+    "start": "node src/server.main.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.1",
+    "playwright": "^1.59.1"
+  }
+}
